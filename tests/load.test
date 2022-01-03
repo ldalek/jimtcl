@@ -6,20 +6,14 @@ needs cmd load interp
 # (from the same directory as jimsh).
 # If we don't have that, just skip these tests.
 
-set buildjimext [file join [file dirname [info nameofexecutable]] build-jim-ext]
+set buildjimext [list [info nameofexecutable] [file join [file dirname [info nameofexecutable]] build-jim-ext]]
 # loadtest.c is in the same directory as this script
 set src [file join [file dirname [info script]] loadtest.c]
 
-set skip 1
-if {[file exec $buildjimext]} {
-	set skip [catch {
-		exec $buildjimext $src
-	}]
-	if {!$skip && ![file exists loadtest.so]} {
-		set skip 1
-	}
-}
-if {$skip} {
+set skip [catch {
+	exec {*}$buildjimext $src
+} msg opts]
+if {$skip || ![file exists loadtest.so]} {
 	skiptest "  (no working build-jim-ext)"
 }
 
@@ -35,7 +29,7 @@ test load-1.1 {load initial} {
 } {0}
 
 test load-1.2 {create loadable extension} -body {
-	exec $buildjimext $src
+	exec {*}$buildjimext $src
 	file exists loadtest.so
 } -result {1}
 
@@ -73,7 +67,7 @@ $interp delete
 
 test load-2.1 {loadable extension with full path} -body {
 	set interp [interp]
-	exec $buildjimext $src
+	exec {*}$buildjimext $src
 	$interp eval {
 		load [pwd]/loadtest.so
 		loadtest test def
@@ -96,7 +90,7 @@ test load-2.2 {loadable extension without extension} -body {
 
 test load-2.1 {loadable extension with no entrypoint} -body {
 	set interp [interp]
-	exec $buildjimext --notest -DNO_ENTRYPOINT $src
+	exec {*}$buildjimext --notest -DNO_ENTRYPOINT $src
 	$interp eval {
 		load loadtest.so
 	}
