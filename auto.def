@@ -186,6 +186,10 @@ dict set extdb info {
     win32    { check {[have-feature windows]} }
 }
 
+# $host_os will be used below for a few checks
+lassign [split [get-define host] -] host_cpu host_vendor host_os
+# Scrub revision from the host_os
+regsub -all {[0-9.]} $host_os {} host_os
 
 set warnings {}
 
@@ -208,6 +212,13 @@ cc-check-sizeof int
 
 # Default optimisation
 define-append AS_CPPFLAGS -O2
+
+# We want to use these features
+define-append AS_CPPFLAGS -D_XOPEN_SOURCE=500 -D_GNU_SOURCE
+if {$host_os eq "darwin"} {
+    # On macosx, _XOPEN_SOURCE removes some features we need, so re-add them
+    define-append AS_CPPFLAGS -D_DARWIN_C_SOURCE
+}
 
 # check, but don't add to -cflags
 cc-with {} {
@@ -301,10 +312,6 @@ cc-check-lfs
 cc-check-functions fseeko ftello
 
 define TCL_LIBRARY [get-define libdir]/jim
-
-lassign [split [get-define host] -] host_cpu host_vendor host_os
-# Scrub revision from the host_os
-regsub -all {[0-9.]} $host_os {} host_os
 
 switch -glob -- $host_os {
     mingw* {
