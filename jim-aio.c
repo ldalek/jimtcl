@@ -1924,18 +1924,27 @@ static int JimAioSubCmdProc(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
 static int JimAioOpenCommand(Jim_Interp *interp, int argc,
         Jim_Obj *const *argv)
 {
-    const char *mode;
+    const char *mode = "r";
     FILE *fh = NULL;
     const char *filename;
     int fd = -1;
+    int n = 0;
+    int flags = 0;
 
-    if (argc != 2 && argc != 3) {
-        Jim_WrongNumArgs(interp, 1, argv, "filename ?mode?");
+    if (argc > 2 && Jim_CompareStringImmediate(interp, argv[2], "-noclose")) {
+        flags = AIO_KEEPOPEN;
+        n++;
+    }
+    if (argc < 2 || argc > 3 + n) {
+        Jim_WrongNumArgs(interp, 1, argv, "filename ?-noclose? ?mode?");
         return JIM_ERR;
     }
 
     filename = Jim_String(argv[1]);
-    mode = (argc == 3) ? Jim_String(argv[2]) : "r";
+
+    if (argc == 3 + n) {
+        mode = Jim_String(argv[2 + n]);
+    }
 
 #ifdef jim_ext_tclcompat
     {
@@ -2006,7 +2015,7 @@ static int JimAioOpenCommand(Jim_Interp *interp, int argc,
         return JIM_ERR;
     }
 
-    return JimMakeChannel(interp, fh, fd, argv[1], "aio.handle%ld", 0, mode, 0) ? JIM_OK : JIM_ERR;
+    return JimMakeChannel(interp, fh, fd, argv[1], "aio.handle%ld", 0, mode, flags) ? JIM_OK : JIM_ERR;
 }
 
 #if defined(JIM_SSL) && !defined(JIM_BOOTSTRAP)
@@ -2110,12 +2119,12 @@ static AioFile *JimMakeChannel(Jim_Interp *interp, FILE *fh, int fd, Jim_Obj *fi
  * Create a pair of channels. e.g. from pipe() or socketpair()
  */
 static int JimMakeChannelPair(Jim_Interp *interp, int p[2], Jim_Obj *filename,
-    const char *hdlfmt, int family, const char * const mode[2])
+    const char *hdlfmt, int family, const char * const mode[2], int flags)
 {
-    if (JimMakeChannel(interp, NULL, p[0], filename, hdlfmt, family, mode[0], 0)) {
+    if (JimMakeChannel(interp, NULL, p[0], filename, hdlfmt, family, mode[0], flags)) {
         Jim_Obj *objPtr = Jim_NewListObj(interp, NULL, 0);
         Jim_ListAppendElement(interp, objPtr, Jim_GetResult(interp));
-        if (JimMakeChannel(interp, NULL, p[1], filename, hdlfmt, family, mode[1], 0)) {
+        if (JimMakeChannel(interp, NULL, p[1], filename, hdlfmt, family, mode[1], flags)) {
             Jim_ListAppendElement(interp, objPtr, Jim_GetResult(interp));
             Jim_SetResult(interp, objPtr);
             return JIM_OK;
@@ -2131,22 +2140,27 @@ static int JimMakeChannelPair(Jim_Interp *interp, int p[2], Jim_Obj *filename,
 #endif
 
 #ifdef HAVE_PIPE
-static int JimAioPipeCommand(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
+static int JimCreatePipe(Jim_Interp *interp, Jim_Obj *filenameObj, int flags)
 {
-    int p[2];
     static const char * const mode[2] = { "r", "w" };
-
-    if (argc != 1) {
-        Jim_WrongNumArgs(interp, 1, argv, "");
-        return JIM_ERR;
-    }
+    int p[2];
 
     if (pipe(p) != 0) {
         JimAioSetError(interp, NULL);
         return JIM_ERR;
     }
 
-    return JimMakeChannelPair(interp, p, argv[0], "aio.pipe%ld", 0, mode);
+    return JimMakeChannelPair(interp, p, filenameObj, "aio.pipe%ld", 0, mode, flags);
+}
+
+/* Note that if you want -noclose, use "socket -noclose pipe" instead */
+static int JimAioPipeCommand(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
+{
+    if (argc != 1) {
+        Jim_WrongNumArgs(interp, 1, argv, "");
+        return JIM_ERR;
+    }
+    return JimCreatePipe(interp, argv[0], 0);
 }
 #endif
 
@@ -2168,7 +2182,7 @@ static int JimAioOpenPtyCommand(Jim_Interp *interp, int argc, Jim_Obj *const *ar
     }
 
     /* Note: The replica path will be used for both handles slave */
-    return JimMakeChannelPair(interp, p, Jim_NewStringObj(interp, path, -1), "aio.pty%ld", 0, mode);
+    return JimMakeChannelPair(interp, p, Jim_NewStringObj(interp, path, -1), "aio.pty%ld", 0, mode, 0);
 }
 #endif
 
@@ -2220,11 +2234,12 @@ static int JimAioSockCommand(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
     Jim_Obj *argv0 = argv[0];
     int ipv6 = 0;
     int async = 0;
+    int flags = 0;
 
 
     while (argc > 1 && Jim_String(argv[1])[0] == '-') {
-        static const char * const options[] = { "-async", "-ipv6", NULL };
-        enum { OPT_ASYNC, OPT_IPV6 };
+        static const char * const options[] = { "-async", "-ipv6", "-noclose", NULL };
+        enum { OPT_ASYNC, OPT_IPV6, OPT_NOCLOSE };
         int option;
 
         if (Jim_GetEnum(interp, argv[1], options, &option, NULL, JIM_ERRMSG) != JIM_OK) {
@@ -2243,6 +2258,11 @@ static int JimAioSockCommand(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
                 ipv6 = 1;
                 family = PF_INET6;
                 break;
+
+            case OPT_NOCLOSE:
+                flags |= AIO_KEEPOPEN;
+                break;
+
         }
         argc--;
         argv++;
@@ -2277,7 +2297,7 @@ static int JimAioSockCommand(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
             JimAioSetError(interp, NULL);
             return JIM_ERR;
         }
-        return JimMakeChannelPair(interp, p, argv[1], "aio.sockpair%ld", PF_UNIX, mode);
+        return JimMakeChannelPair(interp, p, argv[1], "aio.sockpair%ld", PF_UNIX, mode, flags);
     }
 #endif
 
@@ -2286,7 +2306,7 @@ static int JimAioSockCommand(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
         if (addr || ipv6) {
             goto wrongargs;
         }
-        return JimAioPipeCommand(interp, 1, &argv[1]);
+        return JimCreatePipe(interp, argv[1], flags);
     }
 #endif
 
@@ -2431,7 +2451,7 @@ static int JimAioSockCommand(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
 		filename = argv[1];
 	}
 
-    return JimMakeChannel(interp, NULL, sock, filename, "aio.sock%ld", family, "r+", 0) ? JIM_OK : JIM_ERR;
+    return JimMakeChannel(interp, NULL, sock, filename, "aio.sock%ld", family, "r+", flags) ? JIM_OK : JIM_ERR;
 }
 #endif /* JIM_BOOTSTRAP */
 
