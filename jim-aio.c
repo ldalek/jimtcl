@@ -938,7 +938,7 @@ static int aio_cmd_read(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
         argv++;
     }
     if (argc) {
-        return -1;
+        return JIM_USAGE;
     }
 
     /* reads are nonblocking if a timeout is given */
@@ -978,7 +978,7 @@ int Jim_AioFilehandle(Jim_Interp *interp, Jim_Obj *command)
     Jim_Cmd *cmdPtr = Jim_GetCommand(interp, command, JIM_ERRMSG);
 
     /* XXX: There ought to be a supported API for this */
-    if (cmdPtr && !cmdPtr->isproc && cmdPtr->u.native.cmdProc == JimAioSubCmdProc) {
+    if (cmdPtr && !(cmdPtr->flags & JIM_CMD_ISPROC) && cmdPtr->u.native.cmdProc == JimAioSubCmdProc) {
         return ((AioFile *) cmdPtr->u.native.privData)->fd;
     }
     Jim_SetResultFormatted(interp, "Not a filehandle: \"%#s\"", command);
@@ -1162,7 +1162,7 @@ static int aio_cmd_puts(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
 
     if (argc == 2) {
         if (!Jim_CompareStringImmediate(interp, argv[0], "-nonewline")) {
-            return -1;
+            return JIM_USAGE;
         }
         strObj = argv[1];
         nl = 0;
@@ -1450,7 +1450,7 @@ static int aio_cmd_seek(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
         else if (Jim_CompareStringImmediate(interp, argv[1], "end"))
             orig = SEEK_END;
         else {
-            return -1;
+            return JIM_USAGE;
         }
     }
     if (Jim_GetWide(interp, argv[0], &offset) != JIM_OK) {
@@ -1614,7 +1614,7 @@ static int aio_cmd_sockopt(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
         return JIM_OK;
     }
     if (argc == 1) {
-        return -1;
+        return JIM_USAGE;
     }
 
     /* Set an option */
@@ -1881,7 +1881,7 @@ static int aio_cmd_lock(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
 
     if (argc == 1) {
         if (!Jim_CompareStringImmediate(interp, argv[0], "-wait")) {
-            return -1;
+            return JIM_USAGE;
         }
         lockmode = F_SETLKW;
     }
@@ -1959,7 +1959,7 @@ static int aio_cmd_tty(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
     if (Jim_ListLength(interp, dictObjPtr) % 2) {
         /* Must be a valid dictionary */
         Jim_DecrRefCount(interp, dictObjPtr);
-        return -1;
+        return JIM_USAGE;
     }
 
     ret = Jim_SetTtySettings(interp, af->fd, dictObjPtr);
@@ -2342,18 +2342,12 @@ static int JimAioOpenCommand(Jim_Interp *interp, int argc,
     /* filehandles created by open are not tainted by default */
     int flags = AIO_NOTAINT;
 
-    if (Jim_CheckTaint(interp, JIM_TAINT_ANY)) {
-        Jim_SetTaintError(interp, 1, argv);
-        return JIM_ERR;
-    }
-
     if (argc > 2 && Jim_CompareStringImmediate(interp, argv[2], "-noclose")) {
         flags |= AIO_KEEPOPEN;
         n++;
     }
-    if (argc < 2 || argc > 3 + n) {
-        Jim_WrongNumArgs(interp, 1, argv, "filename ?-noclose? ?mode?");
-        return JIM_ERR;
+    if (argc > 3 + n) {
+        return JIM_USAGE;
     }
 
     filename = Jim_String(argv[1]);
@@ -2490,7 +2484,11 @@ static AioFile *JimMakeChannel(Jim_Interp *interp, int fd, Jim_Obj *filename,
     if (!(flags & AIO_NOTAINT)) {
         JimAioSetTaint(af, JIM_TAINT_STD, JIM_TAINT_STD);
     }
-    Jim_CreateCommand(interp, buf, JimAioSubCmdProc, af, JimAioDelProc);
+    Jim_RegisterCommand(interp, Jim_NewStringObj(interp, buf, -1),
+        JimAioSubCmdProc, JimAioDelProc,
+        NULL,   /* usage comes from -help */
+        NULL,   /* no help */
+        0, -1, JIM_CMD_ISCHANNEL, af);
 
     /* Note that the command must use the global namespace, even if
      * the current namespace is something different
@@ -2533,10 +2531,6 @@ static int JimCreatePipe(Jim_Interp *interp, Jim_Obj *filenameObj, int flags)
 /* Note that if you want -noclose, use "socket -noclose pipe" instead */
 static int JimAioPipeCommand(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
 {
-    if (argc != 1) {
-        Jim_WrongNumArgs(interp, 1, argv, "");
-        return JIM_ERR;
-    }
     return JimCreatePipe(interp, argv[0], 0);
 }
 #endif
@@ -2546,11 +2540,6 @@ static int JimAioOpenPtyCommand(Jim_Interp *interp, int argc, Jim_Obj *const *ar
 {
     int p[2];
     char path[MAXPATHLEN];
-
-    if (argc != 1) {
-        Jim_WrongNumArgs(interp, 1, argv, "");
-        return JIM_ERR;
-    }
 
     if (openpty(&p[0], &p[1], path, NULL, NULL) != 0) {
         JimAioSetError(interp, NULL);
@@ -2608,18 +2597,12 @@ static int JimAioSockCommand(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
     int do_listen = 0;
     int family = PF_INET;
     int type = SOCK_STREAM;
-    Jim_Obj *argv0 = argv[0];
     int ipv6 = 0;
     int async = 0;
     int flags = 0;
 
     if (argc == 2 && Jim_CompareStringImmediate(interp, argv[1], "-commands")) {
         return Jim_CheckShowCommands(interp, argv[1], socktypes);
-    }
-
-    if (Jim_CheckTaint(interp, JIM_TAINT_ANY)) {
-        Jim_SetTaintError(interp, 1, argv);
-        return JIM_ERR;
     }
 
     while (argc > 1 && Jim_String(argv[1])[0] == '-') {
@@ -2654,9 +2637,7 @@ static int JimAioSockCommand(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
     }
 
     if (argc < 2) {
-      wrongargs:
-        Jim_WrongNumArgs(interp, 1, &argv0, "?-async? ?-ipv6? socktype ?address?");
-        return JIM_ERR;
+        return JIM_USAGE;
     }
 
     if (Jim_GetEnum(interp, argv[1], socktypes, &socktype, "socktype", JIM_ERRMSG) != JIM_OK) {
@@ -2676,7 +2657,7 @@ static int JimAioSockCommand(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
         int p[2];
 
         if (addr || ipv6) {
-            goto wrongargs;
+            return JIM_USAGE;
         }
 
         if (socketpair(PF_UNIX, SOCK_STREAM, 0, p) < 0) {
@@ -2691,7 +2672,7 @@ static int JimAioSockCommand(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
 #if defined(HAVE_PIPE)
     if (socktype == SOCK_STREAM_PIPE) {
         if (addr || ipv6) {
-            goto wrongargs;
+            return JIM_USAGE;
         }
         return JimCreatePipe(interp, argv[1], flags);
     }
@@ -2706,14 +2687,14 @@ static int JimAioSockCommand(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
 
         case SOCK_STREAM_CLIENT:
             if (addr == NULL) {
-                goto wrongargs;
+                return JIM_USAGE;
             }
             connect_addr = addr;
             break;
 
         case SOCK_STREAM_SERVER:
             if (addr == NULL) {
-                goto wrongargs;
+                return JIM_USAGE;
             }
             bind_addr = addr;
             reuse = 1;
@@ -2722,7 +2703,7 @@ static int JimAioSockCommand(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
 
         case SOCK_DGRAM_SERVER:
             if (addr == NULL) {
-                goto wrongargs;
+                return JIM_USAGE;
             }
             bind_addr = addr;
             type = SOCK_DGRAM;
@@ -2732,7 +2713,7 @@ static int JimAioSockCommand(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
 #if UNIX_SOCKETS
         case SOCK_UNIX:
             if (addr == NULL) {
-                goto wrongargs;
+                return JIM_USAGE;
             }
             connect_addr = addr;
             family = PF_UNIX;
@@ -2759,7 +2740,7 @@ static int JimAioSockCommand(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
 
         case SOCK_UNIX_SERVER:
             if (addr == NULL) {
-                goto wrongargs;
+                return JIM_USAGE;
             }
             bind_addr = addr;
             family = PF_UNIX;
@@ -2768,7 +2749,7 @@ static int JimAioSockCommand(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
 
         case SOCK_UNIX_DGRAM_SERVER:
             if (addr == NULL) {
-                goto wrongargs;
+                return JIM_USAGE;
             }
             bind_addr = addr;
             type = SOCK_DGRAM;
@@ -2778,7 +2759,7 @@ static int JimAioSockCommand(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
 #ifdef HAVE_OPENPTY
         case SOCK_STREAM_PTY:
             if (addr || ipv6) {
-                goto wrongargs;
+                return JIM_USAGE;
             }
             return JimAioOpenPtyCommand(interp, 1, &argv[1]);
 #endif
@@ -2845,11 +2826,6 @@ static int JimAioLoadSSLCertsCommand(Jim_Interp *interp, int argc, Jim_Obj *cons
 {
     SSL_CTX *ssl_ctx;
 
-    if (argc != 2) {
-        Jim_WrongNumArgs(interp, 1, argv, "dir");
-        return JIM_ERR;
-    }
-
     ssl_ctx = JimAioSslCtx(interp);
     if (!ssl_ctx) {
         return JIM_ERR;
@@ -2864,20 +2840,17 @@ static int JimAioLoadSSLCertsCommand(Jim_Interp *interp, int argc, Jim_Obj *cons
 
 int Jim_aioInit(Jim_Interp *interp)
 {
-
-    if (Jim_PackageProvide(interp, "aio", "1.0", JIM_ERRMSG))
-        return JIM_ERR;
-
+    Jim_PackageProvideCheck(interp, "aio");
 #if defined(JIM_SSL)
-    Jim_CreateCommand(interp, "load_ssl_certs", JimAioLoadSSLCertsCommand, NULL, NULL);
+    Jim_RegisterSimpleCmd(interp, "load_ssl_certs", "dir", 1, 1, JimAioLoadSSLCertsCommand);
 #endif
 
-    Jim_CreateCommand(interp, "open", JimAioOpenCommand, NULL, NULL);
+    Jim_RegisterCmd(interp, "open", "filename ?-noclose? ?mode?", 1, 3, JimAioOpenCommand, NULL, NULL, JIM_CMD_NOTAINT);
 #ifdef HAVE_SOCKETS
-    Jim_CreateCommand(interp, "socket", JimAioSockCommand, NULL, NULL);
+    Jim_RegisterCmd(interp, "socket", "?-async? ?-ipv6? socktype ?address?", 1, 4, JimAioSockCommand, NULL, NULL, JIM_CMD_NOTAINT);
 #endif
 #ifdef HAVE_PIPE
-    Jim_CreateCommand(interp, "pipe", JimAioPipeCommand, NULL, NULL);
+    Jim_RegisterSimpleCmd(interp, "pipe", "", 0, 0, JimAioPipeCommand);
 #endif
 
     /* Create filehandles for stdin, stdout and stderr */
