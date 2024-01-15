@@ -3,6 +3,7 @@
 #define JIM_ANSIC
 #define JIM_REGEXP
 #define HAVE_NO_AUTOCONF
+#define JIM_TINY
 #define _JIMAUTOCONF_H
 #define TCL_LIBRARY "."
 #define jim_ext_bootstrap
@@ -576,7 +577,7 @@ typedef struct Jim_Interp {
     Jim_Obj *result;
     int unused_errorLine;
     Jim_Obj *currentFilenameObj;
-    int unused_addStackTrace;
+    int break_level;
     int maxCallFrameDepth;
     int maxEvalDepth;
     int evalDepth;
@@ -2072,6 +2073,9 @@ enum wbuftype {
 #ifndef MAXPATHLEN
 #define MAXPATHLEN JIM_PATH_LEN
 #endif
+#ifndef ETIMEDOUT
+#define ETIMEDOUT -100
+#endif
 
 
 
@@ -2345,9 +2349,7 @@ static int aio_read_len(Jim_Interp *interp, AioFile *af, int nb, char *buf, size
         if (JimCheckStreamError(interp, af)) {
             return JIM_ERR;
         }
-        if (nb || af->timeout) {
-            return JIM_OK;
-        }
+        break;
     }
 
     return JIM_OK;
@@ -2619,14 +2621,9 @@ static int aio_cmd_gets(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
         offset = len;
         len = af->fops->reader(af, buf, AIO_BUF_LEN, nb);
         if (len <= 0) {
-            if (nb || af->timeout) {
-
-                break;
-            }
+            break;
         }
-        else {
-            Jim_AppendString(interp, af->readbuf, buf, len);
-        }
+        Jim_AppendString(interp, af->readbuf, buf, len);
     }
 
     aio_set_nonblocking(af, nb);
@@ -6659,10 +6656,6 @@ int Jim_arrayInit(Jim_Interp *interp)
     Jim_CreateCommand(interp, "array", Jim_SubCmdProc, (void *)array_command_table, NULL);
     return JIM_OK;
 }
-
-#include <sys/types.h>
-#include <sys/time.h>
-#include <sys/wait.h>
 #include <unistd.h>
 #include <string.h>
 #include <errno.h>
@@ -6734,7 +6727,9 @@ Jim_stdlibInit(interp);
 Jim_tclcompatInit(interp);
 return JIM_OK;
 }
+#ifndef JIM_TINY
 #define JIM_OPTIMIZATION
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -6794,7 +6789,9 @@ return JIM_OK;
 
 #define JIM_INTEGER_SPACE 24
 
-const char *jim_tt_name(int type);
+#if defined(DEBUG_SHOW_SCRIPT) || defined(DEBUG_SHOW_SCRIPT_TOKENS) || defined(JIM_DEBUG_COMMAND)
+static const char *jim_tt_name(int type);
+#endif
 
 #ifdef JIM_DEBUG_PANIC
 static void JimPanicDump(int fail_condition, const char *fmt, ...);
@@ -14539,31 +14536,6 @@ static int JimParseExprOperator(struct JimParserCtx *pc)
     return JIM_OK;
 }
 
-const char *jim_tt_name(int type)
-{
-    static const char * const tt_names[JIM_TT_EXPR_OP] =
-        { "NIL", "STR", "ESC", "VAR", "ARY", "CMD", "SEP", "EOL", "EOF", "LIN", "WRD", "(((", ")))", ",,,", "INT",
-            "DBL", "BOO", "$()" };
-    if (type < JIM_TT_EXPR_OP) {
-        return tt_names[type];
-    }
-    else if (type == JIM_EXPROP_UNARYMINUS) {
-        return "-VE";
-    }
-    else if (type == JIM_EXPROP_UNARYPLUS) {
-        return "+VE";
-    }
-    else {
-        const struct Jim_ExprOperator *op = JimExprOperatorInfoByOpcode(type);
-        static char buf[20];
-
-        if (op->name) {
-            return op->name;
-        }
-        sprintf(buf, "(%d)", type);
-        return buf;
-    }
-}
 
 static void FreeExprInternalRep(Jim_Interp *interp, Jim_Obj *objPtr);
 static void DupExprInternalRep(Jim_Interp *interp, Jim_Obj *srcPtr, Jim_Obj *dupPtr);
@@ -17276,7 +17248,7 @@ static int Jim_UnsetCoreCommand(Jim_Interp *interp, int argc, Jim_Obj *const *ar
 static int JimCheckLoopRetcode(Jim_Interp *interp, int retval)
 {
     if (retval == JIM_BREAK || retval == JIM_CONTINUE) {
-        if (--interp->returnLevel > 0) {
+        if (--interp->break_level > 0) {
             return 1;
         }
     }
@@ -17466,15 +17438,14 @@ static int Jim_ForCoreCommand(Jim_Interp *interp, int argc, Jim_Obj *const *argv
     while (boolean && (retval == JIM_OK || retval == JIM_CONTINUE)) {
 
         retval = Jim_EvalObj(interp, argv[4]);
-
+        if (JimCheckLoopRetcode(interp, retval)) {
+            immediate++;
+            break;
+        }
         if (retval == JIM_OK || retval == JIM_CONTINUE) {
 
 JIM_IF_OPTIM(evalnext:)
             retval = Jim_EvalObj(interp, argv[3]);
-            if (JimCheckLoopRetcode(interp, retval)) {
-                immediate++;
-                goto out;
-            }
             if (retval == JIM_OK || retval == JIM_CONTINUE) {
 
 JIM_IF_OPTIM(testcond:)
@@ -18614,7 +18585,7 @@ static int JimBreakContinueHelper(Jim_Interp *interp, int argc, Jim_Obj *const *
         if (ret != JIM_OK) {
             return ret;
         }
-        interp->returnLevel = level;
+        interp->break_level = level;
     }
     return retcode;
 }
@@ -24260,6 +24231,11 @@ int main(int argc, char *const argv[])
 
     Jim_SetVariableStrWithStr(interp, "jim::argv0", orig_argv0);
     Jim_SetVariableStrWithStr(interp, JIM_INTERACTIVE, argc == 1 ? "1" : "0");
+#ifdef USE_LINENOISE
+    Jim_SetVariableStrWithStr(interp, "jim::lineedit", "1");
+#else
+    Jim_SetVariableStrWithStr(interp, "jim::lineedit", "0");
+#endif
     retcode = Jim_initjimshInit(interp);
 
     if (argc == 1) {
