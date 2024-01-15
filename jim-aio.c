@@ -117,6 +117,9 @@ enum wbuftype {
 #ifndef MAXPATHLEN
 #define MAXPATHLEN JIM_PATH_LEN
 #endif
+#ifndef ETIMEDOUT
+#define ETIMEDOUT -100
+#endif
 
 #if defined(HAVE_SOCKETS) && !defined(JIM_BOOTSTRAP)
 /* Avoid type punned pointers */

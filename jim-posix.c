@@ -31,10 +31,6 @@
  * are those of the authors and should not be interpreted as representing
  * official policies, either expressed or implied, of the Jim Tcl Project.
  */
-
-#include <sys/types.h>
-#include <sys/time.h>
-#include <sys/wait.h>
 #include <unistd.h>
 #include <string.h>
 #include <errno.h>
