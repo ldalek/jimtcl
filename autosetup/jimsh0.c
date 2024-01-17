@@ -28,6 +28,10 @@
 #define TCL_PLATFORM_OS "mingw"
 #define TCL_PLATFORM_PLATFORM "windows"
 #define TCL_PLATFORM_PATH_SEPARATOR ";"
+/* Need at least Windows XP for GetProcessId() */
+#ifndef _WIN32_WINNT
+#define _WIN32_WINNT _WIN32_WINNT_WINXP
+#endif
 #define HAVE_MKDIR_ONE_ARG
 #define HAVE_SYSTEM
 #define HAVE_SYS_TIME_H
