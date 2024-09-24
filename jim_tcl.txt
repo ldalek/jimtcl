@@ -59,6 +59,7 @@ Changes since 0.83
 3. New `lsubst` command to create lists using subst-style substitution
 4. Add support for `regexp -expanded` and `regsub -expanded`
 5. `vwait` now accepts a script argument
+6. Add support for `os.umask`
 
 Changes between 0.82 and 0.83
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -5020,8 +5021,8 @@ what options were selected when Jim Tcl was built.
 
 
 [[cmd_1]]
-posix: os.fork, os.gethostname, os.getids, os.uptime
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+posix: os.fork, os.gethostname, os.getids, os.uptime, os.umask
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 +*os.fork*+::
     Invokes 'fork(2)' and returns the result.
 
@@ -5035,6 +5036,9 @@ posix: os.fork, os.gethostname, os.getids, os.uptime
     . os.getids
     uid 1000 euid 1000 gid 100 egid 100
 ----
+
++*os.umask* ?newmask?+::
+    Set or return the current process 'umask(2)'. Returns the previous umask.
 
 +*os.uptime*+::
     Returns the number of seconds since system boot. See description of 'uptime' in 'sysinfo(2)'.
