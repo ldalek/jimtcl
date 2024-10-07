@@ -5842,6 +5842,9 @@ void Jim_FreeInterp(Jim_Interp *i)
         JimFreeCallFrame(i, cf, JIM_FCF_FULL);
     }
 
+    /* Must be done before freeing singletons */
+    Jim_FreeHashTable(&i->commands);
+
     Jim_DecrRefCount(i, i->emptyObj);
     Jim_DecrRefCount(i, i->trueObj);
     Jim_DecrRefCount(i, i->falseObj);
@@ -5852,8 +5855,6 @@ void Jim_FreeInterp(Jim_Interp *i)
     Jim_DecrRefCount(i, i->defer);
     Jim_DecrRefCount(i, i->nullScriptObj);
     Jim_DecrRefCount(i, i->currentFilenameObj);
-
-    Jim_FreeHashTable(&i->commands);
 
     /* This will disard any cached commands */
     Jim_InterpIncrProcEpoch(i);
